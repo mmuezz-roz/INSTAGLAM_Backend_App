@@ -1,8 +1,9 @@
-import { UserModel } from "../Models/User.js";
+
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-
-//  ================= REGISTER ================= 
+import { UserModel } from "../Models/user.js";
+import { OAuth2Client } from "google-auth-library";
+ 
 export const registerUser = async (req, res) => {
   try {
     const { username, email, password } = req.body;
@@ -83,10 +84,19 @@ export const userLogin = async (req, res) => {
       { expiresIn: "1d" }
     );
 
+   const safeUser = {
+      _id: loginedUser._id,
+      username: loginedUser.username,
+      email: loginedUser.email,
+      profilePic: loginedUser.profilePic,
+      bio: loginedUser.bio,
+      isPrivate: loginedUser.isPrivate,
+    };
+
     res.status(200).json({
       message: "Login successful!",
       token,
-      user: loginedUser,
+      user: safeUser,
     });
 
   } catch (error) {
@@ -98,9 +108,16 @@ export const userLogin = async (req, res) => {
 
 
 
+
+const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
 export const googleAuth = async (req, res) => {
   try {
     const { token } = req.body;
+
+    if (!token) {
+      return res.status(400).json({ message: "Google token missing" });
+    }
 
     
     const ticket = await client.verifyIdToken({
@@ -124,8 +141,12 @@ export const googleAuth = async (req, res) => {
       });
     }
 
-   
-    const jwtToken = generateToken(user._id);
+    
+    const jwtToken = jwt.sign(
+      { id: user._id },
+      process.env.JWT_SECRET,
+      { expiresIn: "7d" }
+    );
 
     res.status(200).json({
       token: jwtToken,
@@ -133,8 +154,7 @@ export const googleAuth = async (req, res) => {
     });
 
   } catch (error) {
-    console.error(error);
+    console.error("Google auth error:", error);
     res.status(401).json({ message: "Google authentication failed" });
   }
-}; 
-
+};

@@ -1,6 +1,9 @@
+
+
+
 import multer from "multer";
 
-// only images accepted
+
 const fileFilter = (req, file, cb) => {
   const allowed = [
     "image/jpeg",
@@ -16,14 +19,14 @@ const fileFilter = (req, file, cb) => {
   }
 };
 
-// store image in memory (good for cloud upload like Cloudinary)
+
 const storage = multer.memoryStorage();
 
 const upload = multer({
   storage,
   fileFilter,
   limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB limit
+    fileSize: 5 * 1024 * 1024, 
   },
 });
 
