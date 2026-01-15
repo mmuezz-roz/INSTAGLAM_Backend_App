@@ -1,8 +1,9 @@
 
 
 
-import { UserModel } from "../Models/user.js";
 import { uploadToCloudinary } from "../config/cloudinary.js";
+import UserModel from "../Models/User.js";
+// import UserModel from "../Models/User.js";
 
 export const editProfile = async (req, res) => {
   try {

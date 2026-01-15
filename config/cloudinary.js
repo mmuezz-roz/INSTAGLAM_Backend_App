@@ -1,7 +1,4 @@
 
-
-
-
 import { v2 as cloudinary } from "cloudinary";
 import dotenv from "dotenv";
 
@@ -41,3 +38,4 @@ export const uploadToCloudinary = (fileBuffer) => {
   });
   
 };
+export default cloudinary

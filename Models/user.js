@@ -38,10 +38,31 @@ const UserSchema = new mongoose.Schema({
     default: false
   },
 
+   followers: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User"
+  }],
+
+  following: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User"
+  }],
+
+ followRequests: [{
+  type: mongoose.Schema.Types.ObjectId,
+  ref: "User",
+}],
+
+
   createdAt: {
     type: Date,
     default: Date.now
   }
 });
 
-export const UserModel= mongoose.model("User", UserSchema);
+// export const UserModel= mongoose.model("User", UserSchema);
+const UserModel =
+  mongoose.models.User || mongoose.model("User", UserSchema);
+
+export default UserModel;
+

@@ -1,8 +1,17 @@
 
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { UserModel } from "../Models/user.js";
+
 import { OAuth2Client } from "google-auth-library";
+
+import { NotificationModel } from "../Models/Notification.js";
+import { getSocketId, io } from "../server.js";
+import UserModel from "../Models/user.js";
+
+
+
+
+
  
 export const registerUser = async (req, res) => {
   try {
@@ -158,3 +167,230 @@ export const googleAuth = async (req, res) => {
     res.status(401).json({ message: "Google authentication failed" });
   }
 };
+
+
+
+export const getMyProfile = async (req, res) => {
+  try {
+    const user = await UserModel.findById(req.user._id)
+      .select("-password");
+
+    res.status(200).json({
+      user,
+      followersCount: user.followers.length,
+      followingCount: user.following.length,
+      postCount: 0 // will update later
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Failed to fetch profile" });
+  }
+};
+
+
+
+export const searchUsers = async (req, res) => {
+  try {
+    const { q } = req.query;
+
+    if (!q) {
+      return res.json([]);
+    }
+
+    const users = await UserModel.find({
+      username: { $regex: q, $options: "i" }
+    })
+      .select("_id username profilePic");
+
+    res.status(200).json(users);
+  } catch (error) {
+    res.status(500).json({ message: "Search failed" });
+  }
+};
+
+
+
+
+
+export const getUserProfile = async (req, res) => {
+  try {
+    const userId = req.params.id;
+
+    const user = await UserModel.findById(userId).select("-password");
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      user,
+    });
+  } catch (error) {
+    console.error("Get User Profile Error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+};
+
+
+
+
+
+
+
+
+
+export const followUnfollowUser = async (req, res) => {
+  try {
+    const targetUserId = req.params.id; // ✅ FIXED
+    const currentUserId = req.user._id;
+
+    if (targetUserId.toString() === currentUserId.toString()) {
+      return res.status(400).json({ message: "You cannot follow yourself" });
+    }
+
+    const targetUser = await UserModel.findById(targetUserId);
+    const currentUser = await UserModel.findById(currentUserId);
+
+    if (!targetUser || !currentUser) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // 🔁 UNFOLLOW
+    if (currentUser.following.includes(targetUserId)) {
+      currentUser.following.pull(targetUserId);
+      targetUser.followers.pull(currentUserId);
+
+      await currentUser.save();
+      await targetUser.save();
+
+      return res.json({ following: false });
+    }
+
+    // 🔒 PRIVATE ACCOUNT → FOLLOW REQUEST
+    if (targetUser.isPrivate) {
+      if (!targetUser.followRequests.includes(currentUserId)) {
+        targetUser.followRequests.push(currentUserId);
+        await targetUser.save();
+
+        await NotificationModel.create({
+          receiver: targetUserId,
+          sender: currentUserId,
+          type: "follow_request",
+        });
+
+        const socketId = getSocketId(targetUserId);
+        if (socketId) {
+          io.to(socketId).emit("newNotification");
+        }
+      }
+
+      return res.json({ requested: true });
+    }
+
+    // 🌍 PUBLIC ACCOUNT → FOLLOW
+    currentUser.following.push(targetUserId);
+    targetUser.followers.push(currentUserId);
+
+    await currentUser.save();
+    await targetUser.save();
+
+    await NotificationModel.create({
+      receiver: targetUserId,
+      sender: currentUserId,
+      type: "follow",
+    });
+
+    const socketId = getSocketId(targetUserId);
+    if (socketId) {
+      io.to(socketId).emit("newNotification");
+    }
+
+    return res.json({ following: true });
+
+  } catch (err) {
+    console.error("FOLLOW ERROR:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+
+
+
+
+export const getFollowRequests = async (req, res) => {
+  try {
+    const user = await UserModel.findById(req.user._id)
+      .populate("followRequests", "username profilePic");
+
+    res.status(200).json({
+      requests: user.followRequests,
+    });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to fetch follow requests" });
+  }
+};
+
+
+
+export const acceptFollowRequest = async (req, res) => {
+  try {
+    const { requesterId } = req.params;
+    const user = await UserModel.findById(req.user._id);
+
+    if (!user.followRequests.includes(requesterId)) {
+      return res.status(400).json({ message: "No such request" });
+    }
+
+    // remove request
+    user.followRequests.pull(requesterId);
+    user.followers.push(requesterId);
+
+    const requester = await UserModel.findById(requesterId);
+    requester.following.push(user._id);
+
+    await user.save();
+    await requester.save();
+
+   // 🔔 NOTIFY REQUESTER
+    await NotificationModel.create({
+    receiver: requesterId,   // 👈 requester gets notified
+   sender: req.user._id,    // 👈 private account owner
+   type: "follow",
+    });
+
+res.json({ accepted: true });
+
+  } catch (err) {
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+
+
+
+
+
+export const rejectFollowRequest = async (req, res) => {
+  try {
+    const { requesterId } = req.params;
+
+    const user = await UserModel.findById(req.user._id);
+    user.followRequests.pull(requesterId);
+    await user.save();
+
+    res.json({ rejected: true });
+
+  } catch (err) {
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+
+
+
