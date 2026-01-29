@@ -34,10 +34,23 @@ export const registerUser = async (req, res) => {
       { expiresIn: "1d" }
     );
 
+    // res.status(201).json({
+    //   token,
+    //   user: newUser,
+    // });
     res.status(201).json({
-      token,
-      user: newUser,
-    });
+  message: "Registration successful",
+  token,
+  user: {
+    _id: newUser._id,
+    username: newUser.username,
+    email: newUser.email,
+    profilePic: newUser.profilePic,
+    bio: newUser.bio,
+    isPrivate: newUser.isPrivate,
+  },
+});
+
   } catch (err) {
     res.status(500).json({ message: "Registration failed" });
   }
