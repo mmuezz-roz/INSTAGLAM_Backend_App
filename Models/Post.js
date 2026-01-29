@@ -13,6 +13,12 @@ const commentSchema = new mongoose.Schema(
       trim: true,
       maxlength: 500,
     },
+    likes: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+    ],
   },
   { timestamps: true }
 );
@@ -26,19 +32,19 @@ const postSchema = new mongoose.Schema(
       required: true,
     },
 
-   images: [
-  {
-    type: String,
-    required: true,
-  },
-],
+    images: [
+      {
+        type: String,
+        required: true,
+      },
+    ],
 
 
     caption: {
       type: String,
       default: "",
     },
-    
+
 
 
     likes: [
@@ -47,8 +53,8 @@ const postSchema = new mongoose.Schema(
         ref: "User",
       },
     ],
-    
-   comments: [commentSchema], // ✅ ADD THIS
+
+    comments: [commentSchema],
 
     isPrivate: {
       type: Boolean,

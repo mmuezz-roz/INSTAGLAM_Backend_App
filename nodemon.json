@@ -1,0 +1,18 @@
+{
+    "delay": "2000",
+    "verbose": true,
+    "watch": [
+        "*.js",
+        "Controller/**/*.js",
+        "Route/**/*.js",
+        "Models/**/*.js",
+        "config/**/*.js",
+        "Middleware/**/*.js"
+    ],
+    "ext": "js,json",
+    "ignore": [
+        "node_modules/**",
+        "uploads/**"
+    ],
+    "signal": "SIGTERM"
+}

@@ -9,7 +9,6 @@
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.1.1",
     "multer": "^2.0.2",
-    "nodemon": "^3.1.11",
     "socket.io": "^4.8.3"
   },
   "name": "backend",
@@ -22,5 +21,8 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "module"
+  "type": "module",
+  "devDependencies": {
+    "nodemon": "^3.1.11"
+  }
 }

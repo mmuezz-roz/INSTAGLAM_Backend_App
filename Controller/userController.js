@@ -1,36 +1,26 @@
-
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-
 import { OAuth2Client } from "google-auth-library";
 
+import UserModel from "../Models/User.js";
 import { NotificationModel } from "../Models/Notification.js";
-import { getSocketId, io } from "../server.js";
-import UserModel from "../Models/user.js";
+import { getSocketId, io } from "../socket.js";
 
-
-
-
-
- 
+/* ================= REGISTER ================= */
 export const registerUser = async (req, res) => {
   try {
     const { username, email, password } = req.body;
 
-    
     if (!username || !email || !password) {
       return res.status(400).json({ message: "All fields are required" });
     }
 
-    
     const existing = await UserModel.findOne({ email });
     if (existing) {
       return res.status(409).json({ message: "Email already exists" });
     }
 
-    
     const hashed = await bcrypt.hash(password, 10);
-
 
     const newUser = await UserModel.create({
       username,
@@ -38,97 +28,67 @@ export const registerUser = async (req, res) => {
       password: hashed,
     });
 
-    
     const token = jwt.sign(
-      { id: newUser._id, email: newUser.email },
+      { id: newUser._id },
       process.env.JWT_SECRET,
       { expiresIn: "1d" }
     );
 
     res.status(201).json({
-      message: "Successfully registered!",
       token,
       user: newUser,
     });
-
-  } catch (error) {
-    console.error(error);
+  } catch (err) {
     res.status(500).json({ message: "Registration failed" });
   }
 };
 
-// ================= LOGIN ================= 
+/* ================= LOGIN ================= */
 export const userLogin = async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    
-    if (!email || !password) {
-      return res.status(400).json({ message: "All fields required" });
+    const user = await UserModel.findOne({ email });
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    if (!user.password) {
+      return res.status(401).json({ message: "Google login only account" });
     }
 
-  
-    const loginedUser = await UserModel.findOne({ email });
-    if (!loginedUser) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    // Block Google-only users
-    if (!loginedUser.password) {
-      return res.status(401).json({
-        message: "This account uses Google login",
-      });
-    }
-
-    
-    const match = await bcrypt.compare(password, loginedUser.password);
+    const match = await bcrypt.compare(password, user.password);
     if (!match) {
       return res.status(401).json({ message: "Incorrect password" });
     }
 
-  
     const token = jwt.sign(
-      { id: loginedUser._id, email: loginedUser.email },
+      { id: user._id },
       process.env.JWT_SECRET,
       { expiresIn: "1d" }
     );
 
-   const safeUser = {
-      _id: loginedUser._id,
-      username: loginedUser.username,
-      email: loginedUser.email,
-      profilePic: loginedUser.profilePic,
-      bio: loginedUser.bio,
-      isPrivate: loginedUser.isPrivate,
-    };
-
-    res.status(200).json({
-      message: "Login successful!",
+    res.json({
       token,
-      user: safeUser,
+      user: {
+        _id: user._id,
+        username: user.username,
+        email: user.email,
+        profilePic: user.profilePic,
+        bio: user.bio,
+        isPrivate: user.isPrivate,
+      },
     });
-
-  } catch (error) {
-    console.error(error);
+  } catch (err) {
     res.status(500).json({ message: "Login failed" });
   }
 };
 
-
-
-
-
+/* ================= GOOGLE AUTH ================= */
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 export const googleAuth = async (req, res) => {
   try {
     const { token } = req.body;
 
-    if (!token) {
-      return res.status(400).json({ message: "Google token missing" });
-    }
-
-    
     const ticket = await client.verifyIdToken({
       idToken: token,
       audience: process.env.GOOGLE_CLIENT_ID,
@@ -137,10 +97,8 @@ export const googleAuth = async (req, res) => {
     const payload = ticket.getPayload();
     const { email, name, picture, sub } = payload;
 
-    
     let user = await UserModel.findOne({ email });
 
-    
     if (!user) {
       user = await UserModel.create({
         username: name.replace(/\s/g, "").toLowerCase(),
@@ -150,42 +108,53 @@ export const googleAuth = async (req, res) => {
       });
     }
 
-    
     const jwtToken = jwt.sign(
       { id: user._id },
       process.env.JWT_SECRET,
       { expiresIn: "7d" }
     );
 
-    res.status(200).json({
-      token: jwtToken,
-      user,
-    });
-
-  } catch (error) {
-    console.error("Google auth error:", error);
-    res.status(401).json({ message: "Google authentication failed" });
+    res.json({ token: jwtToken, user });
+  } catch (err) {
+    res.status(401).json({ message: "Google auth failed" });
   }
 };
 
-
-
+/* ================= GET MY PROFILE ================= */
 export const getMyProfile = async (req, res) => {
   try {
-    const user = await UserModel.findById(req.user._id)
-      .select("-password");
+    const user = await UserModel.findById(req.user._id).select("-password");
+    if (!user) return res.status(404).json({ message: "User not found" });
 
-    res.status(200).json({
+    res.json({
       user,
-      followersCount: user.followers.length,
-      followingCount: user.following.length,
-      postCount: 0 // will update later
+      followersCount: user.followers?.length || 0,
+      followingCount: user.following?.length || 0,
+      postCount: 0,
     });
-  } catch (error) {
-    res.status(500).json({ message: "Failed to fetch profile" });
+  } catch (err) {
+    res.status(500).json({ message: "Server error" });
   }
 };
 
+/* ================= GET USER PROFILE ================= */
+export const getUserProfile = async (req, res) => {
+  try {
+    const user = await UserModel.findById(req.params.id).select("-password");
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    // Check statuses relative to current user using string comparison
+    const isFollowing = user.followers.some(id => id.toString() === req.user._id.toString());
+    const requestSent = user.followRequests.some(id => id.toString() === req.user._id.toString());
+
+    res.json({ user, isFollowing, requestSent });
+  } catch (err) {
+    if (err.name === "CastError") {
+      return res.status(404).json({ message: "User not found" });
+    }
+    res.status(500).json({ message: "Server error" });
+  }
+};
 
 
 export const searchUsers = async (req, res) => {
@@ -193,7 +162,8 @@ export const searchUsers = async (req, res) => {
     const { q } = req.query;
 
     if (!q) {
-      return res.json([]);
+      const allUsers = await UserModel.find({}).limit(10).select("_id username profilePic");
+      return res.json(allUsers);
     }
 
     const users = await UserModel.find({
@@ -208,46 +178,10 @@ export const searchUsers = async (req, res) => {
 };
 
 
-
-
-
-export const getUserProfile = async (req, res) => {
-  try {
-    const userId = req.params.id;
-
-    const user = await UserModel.findById(userId).select("-password");
-
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: "User not found",
-      });
-    }
-
-    res.status(200).json({
-      success: true,
-      user,
-    });
-  } catch (error) {
-    console.error("Get User Profile Error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Server error",
-    });
-  }
-};
-
-
-
-
-
-
-
-
-
+/* ================= FOLLOW / UNFOLLOW ================= */
 export const followUnfollowUser = async (req, res) => {
   try {
-    const targetUserId = req.params.id; // ✅ FIXED
+    const targetUserId = req.params.id;
     const currentUserId = req.user._id;
 
     if (targetUserId.toString() === currentUserId.toString()) {
@@ -261,136 +195,177 @@ export const followUnfollowUser = async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    // 🔁 UNFOLLOW
-    if (currentUser.following.includes(targetUserId)) {
+    /* -------- CASE 1: ALREADY FOLLOWING (UNFOLLOW) -------- */
+    if (currentUser.following.some(id => id.toString() === targetUserId.toString())) {
       currentUser.following.pull(targetUserId);
       targetUser.followers.pull(currentUserId);
 
       await currentUser.save();
       await targetUser.save();
 
-      return res.json({ following: false });
+      // Delete the follow notification
+      await NotificationModel.deleteMany({
+        receiver: targetUserId,
+        sender: currentUserId,
+        type: "follow"
+      });
+
+      const socketId = getSocketId(targetUserId);
+      if (socketId) {
+        io.to(socketId).emit("newNotification"); // Trigger refresh
+      }
+
+      return res.json({ following: false, requested: false });
     }
 
-    // 🔒 PRIVATE ACCOUNT → FOLLOW REQUEST
+    /* -------- CASE 2: PENDING REQUEST (CANCEL REQUEST) -------- */
+    if (targetUser.followRequests.some(id => id.toString() === currentUserId.toString())) {
+      targetUser.followRequests.pull(currentUserId);
+      await targetUser.save();
+
+      // Optional: Delete the notification
+      await NotificationModel.deleteMany({
+        receiver: targetUserId,
+        sender: currentUserId,
+        type: "follow_request"
+      });
+
+      const socketId = getSocketId(targetUserId);
+      if (socketId) {
+        io.to(socketId).emit("newNotification"); // Trigger refresh
+      }
+
+      return res.json({ following: false, requested: false });
+    }
+
+    /* -------- CASE 3: PRIVATE ACCOUNT (SEND REQUEST) -------- */
     if (targetUser.isPrivate) {
       if (!targetUser.followRequests.includes(currentUserId)) {
         targetUser.followRequests.push(currentUserId);
         await targetUser.save();
-
-        await NotificationModel.create({
-          receiver: targetUserId,
-          sender: currentUserId,
-          type: "follow_request",
-        });
-
-        const socketId = getSocketId(targetUserId);
-        if (socketId) {
-          io.to(socketId).emit("newNotification");
-        }
       }
 
-      return res.json({ requested: true });
+      await NotificationModel.findOneAndUpdate(
+        { receiver: targetUserId, sender: currentUserId, type: "follow_request" },
+        { $set: { createdAt: new Date(), isRead: false } },
+        { upsert: true }
+      );
+
+      const socketId = getSocketId(targetUserId);
+      if (socketId) {
+        io.to(socketId).emit("newNotification");
+      }
+
+      return res.json({ requested: true, following: false });
     }
 
-    // 🌍 PUBLIC ACCOUNT → FOLLOW
+    /* -------- CASE 4: PUBLIC ACCOUNT (FOLLOW DIRECTLY) -------- */
     currentUser.following.push(targetUserId);
     targetUser.followers.push(currentUserId);
 
     await currentUser.save();
     await targetUser.save();
 
-    await NotificationModel.create({
-      receiver: targetUserId,
-      sender: currentUserId,
-      type: "follow",
-    });
+    await NotificationModel.findOneAndUpdate(
+      { receiver: targetUserId, sender: currentUserId, type: "follow" },
+      { $set: { createdAt: new Date(), isRead: false } },
+      { upsert: true }
+    );
 
     const socketId = getSocketId(targetUserId);
     if (socketId) {
       io.to(socketId).emit("newNotification");
     }
 
-    return res.json({ following: true });
-
+    return res.json({ following: true, requested: false });
   } catch (err) {
     console.error("FOLLOW ERROR:", err);
     res.status(500).json({ message: "Server error" });
   }
 };
 
-
-
-
-
+/* ================= FOLLOW REQUESTS ================= */
 export const getFollowRequests = async (req, res) => {
-  try {
-    const user = await UserModel.findById(req.user._id)
-      .populate("followRequests", "username profilePic");
+  const user = await UserModel.findById(req.user._id)
+    .populate("followRequests", "username profilePic");
 
-    res.status(200).json({
-      requests: user.followRequests,
-    });
-  } catch (err) {
-    res.status(500).json({ message: "Failed to fetch follow requests" });
-  }
+  res.json({ requests: user.followRequests });
 };
-
-
 
 export const acceptFollowRequest = async (req, res) => {
-  try {
-    const { requesterId } = req.params;
-    const user = await UserModel.findById(req.user._id);
+  const { requesterId } = req.params;
 
-    if (!user.followRequests.includes(requesterId)) {
-      return res.status(400).json({ message: "No such request" });
-    }
-
-    // remove request
-    user.followRequests.pull(requesterId);
-    user.followers.push(requesterId);
-
-    const requester = await UserModel.findById(requesterId);
-    requester.following.push(user._id);
-
-    await user.save();
-    await requester.save();
-
-   // 🔔 NOTIFY REQUESTER
-    await NotificationModel.create({
-    receiver: requesterId,   // 👈 requester gets notified
-   sender: req.user._id,    // 👈 private account owner
-   type: "follow",
-    });
-
-res.json({ accepted: true });
-
-  } catch (err) {
-    res.status(500).json({ message: "Server error" });
+  const user = await UserModel.findById(req.user._id);
+  if (!user.followRequests.includes(requesterId)) {
+    return res.status(400).json({ message: "No request found" });
   }
+
+  user.followRequests.pull(requesterId);
+  user.followers.push(requesterId);
+
+  const requester = await UserModel.findById(requesterId);
+  requester.following.push(user._id);
+
+  await user.save();
+  await requester.save();
+
+  // 🗑️ Delete the request notification
+  await NotificationModel.deleteMany({
+    receiver: req.user._id,
+    sender: requesterId,
+    type: "follow_request"
+  });
+
+  await NotificationModel.findOneAndUpdate(
+    { receiver: requesterId, sender: req.user._id, type: "follow" },
+    { $set: { createdAt: new Date(), isRead: false } },
+    { upsert: true }
+  );
+
+  const socketId = getSocketId(requesterId);
+  if (socketId) {
+    io.to(socketId).emit("newNotification");
+  }
+
+  res.json({ accepted: true });
 };
-
-
-
-
-
 
 export const rejectFollowRequest = async (req, res) => {
+  const { requesterId } = req.params;
+
+  const user = await UserModel.findById(req.user._id);
+  user.followRequests.pull(requesterId);
+  await user.save();
+
+  // 🗑️ Delete the request notification
+  await NotificationModel.deleteMany({
+    receiver: req.user._id,
+    sender: requesterId,
+    type: "follow_request"
+  });
+
+  res.json({ rejected: true });
+};
+
+/* ================= GET LISTS ================= */
+export const getFollowers = async (req, res) => {
   try {
-    const { requesterId } = req.params;
-
-    const user = await UserModel.findById(req.user._id);
-    user.followRequests.pull(requesterId);
-    await user.save();
-
-    res.json({ rejected: true });
-
+    const user = await UserModel.findById(req.params.id)
+      .populate("followers", "username profilePic bio");
+    if (!user) return res.status(404).json({ message: "User not found" });
+    res.json(user.followers);
   } catch (err) {
     res.status(500).json({ message: "Server error" });
   }
 };
 
-
-
-
+export const getFollowing = async (req, res) => {
+  try {
+    const user = await UserModel.findById(req.params.id)
+      .populate("following", "username profilePic bio");
+    if (!user) return res.status(404).json({ message: "User not found" });
+    res.json(user.following);
+  } catch (err) {
+    res.status(500).json({ message: "Server error" });
+  }
+};

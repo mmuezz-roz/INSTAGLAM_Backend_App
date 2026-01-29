@@ -1,11 +1,12 @@
+
+
+
+
 import cloudinary from "../config/cloudinary.js";
 import { NotificationModel } from "../Models/Notification.js";
 import { PostModel } from "../Models/Post.js";
 import UserModel from "../Models/User.js";
-
-import { getSocketId } from "../server.js";
-
-
+import { getSocketId, io } from "../socket.js";
 
 export const createPost = async (req, res) => {
   try {
@@ -19,7 +20,7 @@ export const createPost = async (req, res) => {
       const result = await new Promise((resolve, reject) => {
         const stream = cloudinary.uploader.upload_stream(
           { folder: "posts" },
-          (err, res) => (err ? reject(err) : resolve(res))
+          (err, result) => (err ? reject(err) : resolve(result))
         );
         stream.end(file.buffer);
       });
@@ -43,19 +44,14 @@ export const createPost = async (req, res) => {
   }
 };
 
-
-
 export const getUserPosts = async (req, res) => {
   try {
     const { userId } = req.params;
     const viewerId = req.user._id;
 
     const user = await UserModel.findById(userId);
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
+    if (!user) return res.status(404).json({ message: "User not found" });
 
-    // 🔒 Private account check
     const isFollower =
       user.followers.includes(viewerId) ||
       userId.toString() === viewerId.toString();
@@ -70,36 +66,10 @@ export const getUserPosts = async (req, res) => {
       .sort({ createdAt: -1 });
 
     res.json({ posts });
-  } catch (error) {
-    console.error(error);
+  } catch (err) {
     res.status(500).json({ message: "Failed to fetch posts" });
   }
 };
-
-
-
-// export const getFeedPosts = async (req, res) => {
-//   try {
-//     const user = await UserModel.findById(req.user._id);
-
-//     const posts = await PostModel.find({
-//       $or: [
-//         { user: { $in: user.following } },
-//         { user: user._id },
-//         { isPrivate: false },
-//       ],
-//     })
-//       .populate("user", "username profilePic")
-//       .sort({ createdAt: -1 });
-
-//     res.json({ posts });
-
-//   } catch (err) {
-//     console.error(err);
-//     res.status(500).json({ message: "Failed to fetch feed" });
-//   }
-// };
-
 
 export const getFeedPosts = async (req, res) => {
   try {
@@ -107,7 +77,6 @@ export const getFeedPosts = async (req, res) => {
 
     const posts = await PostModel.find({
       user: { $in: [...user.following, user._id] },
-
     })
       .populate("user", "username profilePic")
       .populate("comments.user", "username profilePic")
@@ -115,14 +84,9 @@ export const getFeedPosts = async (req, res) => {
 
     res.json({ posts });
   } catch (err) {
-    console.error(err);
     res.status(500).json({ message: "Failed to fetch feed" });
   }
 };
-
-
-
-
 
 export const likeUnlikePost = async (req, res) => {
   try {
@@ -130,17 +94,13 @@ export const likeUnlikePost = async (req, res) => {
     const userId = req.user._id;
 
     const post = await PostModel.findById(postId);
-    if (!post) {
-      return res.status(404).json({ message: "Post not found" });
-    }
+    if (!post) return res.status(404).json({ message: "Post not found" });
 
     const alreadyLiked = post.likes.includes(userId);
 
     if (alreadyLiked) {
-      // 🔻 UNLIKE
       post.likes.pull(userId);
 
-      // 🔕 REMOVE notification
       await NotificationModel.findOneAndDelete({
         receiver: post.user,
         sender: userId,
@@ -148,11 +108,14 @@ export const likeUnlikePost = async (req, res) => {
         type: "like",
       });
 
+      // 🔔 SOCKET NOTIFICATION (Remove instantly)
+      const socketId = getSocketId(post.user);
+      if (socketId) {
+        io.to(socketId).emit("newNotification");
+      }
     } else {
-      // ❤️ LIKE
       post.likes.push(userId);
 
-      // 🔔 CREATE notification ONLY IF NOT EXISTS
       if (post.user.toString() !== userId.toString()) {
         await NotificationModel.findOneAndUpdate(
           {
@@ -170,6 +133,12 @@ export const likeUnlikePost = async (req, res) => {
           },
           { upsert: true, new: true }
         );
+
+        // 🔔 SOCKET NOTIFICATION
+        const socketId = getSocketId(post.user);
+        if (socketId) {
+          io.to(socketId).emit("newNotification");
+        }
       }
     }
 
@@ -188,17 +157,13 @@ export const likeUnlikePost = async (req, res) => {
 
 
 
-
-
-
-
 export const addComment = async (req, res) => {
   try {
     const { postId } = req.params;
     const { text } = req.body;
     const userId = req.user._id;
 
-    if (!text || !text.trim()) {
+    if (!text?.trim()) {
       return res.status(400).json({ message: "Comment cannot be empty" });
     }
 
@@ -207,40 +172,49 @@ export const addComment = async (req, res) => {
       return res.status(404).json({ message: "Post not found" });
     }
 
-    // 💬 Create comment
-    post.comments.push({
+    const comment = {
       user: userId,
       text: text.trim(),
-    });
+    };
 
+    post.comments.push(comment);
     await post.save();
 
-    // populate ONLY latest comment user
-    await post.populate("comments.user", "username profilePic");
+    const addedComment = post.comments.at(-1);
 
-    const newComment = post.comments.at(-1);
-
-    // 🔔 COMMENT NOTIFICATION (if not own post)
+    // 🔔 Notification (not self)
     if (post.user._id.toString() !== userId.toString()) {
-      await NotificationModel.create({
-        receiver: post.user._id,
-        sender: userId,
-        type: "comment",
-        post: post._id,
-        comment: newComment._id, 
-      });
+      try {
+        const notification = await NotificationModel.create({
+          receiver: post.user._id,
+          sender: userId,
+          type: "comment",
+          post: post._id,
+          comment: addedComment._id,
+        });
+
+        const socketId = getSocketId(post.user._id.toString());
+        if (socketId) {
+          io.to(socketId).emit("newNotification");
+        }
+      } catch (notifErr) {
+        console.error("Notification error:", notifErr.message);
+        // ❗ DO NOT FAIL COMMENT IF NOTIFICATION FAILS
+      }
     }
 
-    res.status(201).json({
-      success: true,
-      comment: newComment,
-    });
+    await post.populate("comments.user", "username profilePic");
 
+    res.status(201).json({
+      comment: post.comments.at(-1),
+    });
   } catch (err) {
     console.error("Add comment error:", err);
     res.status(500).json({ message: "Failed to add comment" });
   }
 };
+
+
 
 
 
@@ -250,16 +224,11 @@ export const deleteComment = async (req, res) => {
     const userId = req.user._id;
 
     const post = await PostModel.findById(postId);
-    if (!post) {
-      return res.status(404).json({ message: "Post not found" });
-    }
+    if (!post) return res.status(404).json({ message: "Post not found" });
 
     const comment = post.comments.id(commentId);
-    if (!comment) {
-      return res.status(404).json({ message: "Comment not found" });
-    }
+    if (!comment) return res.status(404).json({ message: "Comment not found" });
 
-    // ✅ AUTH CHECK (comment owner OR post owner)
     if (
       comment.user.toString() !== userId.toString() &&
       post.user.toString() !== userId.toString()
@@ -267,22 +236,121 @@ export const deleteComment = async (req, res) => {
       return res.status(403).json({ message: "Not authorized" });
     }
 
-    // 🗑️ DELETE COMMENT
     comment.deleteOne();
     await post.save();
 
-    // 🔔 DELETE ONLY THIS COMMENT'S NOTIFICATION
     await NotificationModel.findOneAndDelete({
       type: "comment",
       comment: commentId,
     });
 
+    res.json({ success: true, commentId });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to delete comment" });
+  }
+};
+
+
+export const deletePost = async (req, res) => {
+  try {
+    const { postId } = req.params;
+    const userId = req.user._id;
+
+    const post = await PostModel.findById(postId);
+    if (!post) {
+      return res.status(404).json({ message: "Post not found" });
+    }
+
+    // 🔒 AUTH CHECK — only owner can delete
+    if (post.user.toString() !== userId.toString()) {
+      return res.status(403).json({ message: "Not authorized" });
+    }
+
+    // 🧹 Delete related notifications
+    await NotificationModel.deleteMany({ post: postId });
+
+    // 🗑️ Delete post
+    await post.deleteOne();
+
     res.json({
       success: true,
-      commentId,
+      postId,
+    });
+
+  } catch (err) {
+    console.error("Delete post error:", err);
+    res.status(500).json({ message: "Failed to delete post" });
+  }
+};
+
+
+/* ================= LIKE / UNLIKE COMMENT ================= */
+export const likeUnlikeComment = async (req, res) => {
+  try {
+    const { postId, commentId } = req.params;
+    const userId = req.user._id;
+
+    const post = await PostModel.findById(postId);
+    if (!post) return res.status(404).json({ message: "Post not found" });
+
+    const comment = post.comments.id(commentId);
+    if (!comment) return res.status(404).json({ message: "Comment not found" });
+
+    const alreadyLiked = comment.likes.includes(userId);
+
+    if (alreadyLiked) {
+      // 🔻 UNLIKE
+      comment.likes.pull(userId);
+
+      // 🔕 Delete notification
+      await NotificationModel.findOneAndDelete({
+        receiver: comment.user,
+        sender: userId,
+        type: "comment_like",
+        post: postId,
+        comment: commentId,
+      });
+    } else {
+      // ❤️ LIKE
+      comment.likes.push(userId);
+
+      // 🔔 Notification (not self)
+      if (comment.user.toString() !== userId.toString()) {
+        await NotificationModel.findOneAndUpdate(
+          {
+            receiver: comment.user,
+            sender: userId,
+            type: "comment_like",
+            post: postId,
+            comment: commentId,
+          },
+          {
+            receiver: comment.user,
+            sender: userId,
+            type: "comment_like",
+            post: postId,
+            comment: commentId,
+            isRead: false,
+          },
+          { upsert: true }
+        );
+
+        // 🔔 Socket
+        const socketId = getSocketId(comment.user.toString());
+        if (socketId) {
+          io.to(socketId).emit("newNotification", { type: "comment_like" });
+        }
+      }
+    }
+
+    await post.save();
+
+    res.json({
+      liked: !alreadyLiked,
+      likesCount: comment.likes.length,
     });
   } catch (err) {
-    console.error("Delete comment error:", err);
-    res.status(500).json({ message: "Failed to delete comment" });
+    console.error("Comment like error:", err);
+    res.status(500).json({ message: "Comment like failed" });
   }
 };
