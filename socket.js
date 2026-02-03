@@ -5,13 +5,14 @@ import express from "express";
 import jwt from "jsonwebtoken";
 import Message from "./Models/Message.js";
 import Conversation from "./Models/Conversation.js";
+import cloudinary from "./config/cloudinary.js";
 
 const app = express();
 const server = http.createServer(app);
 
 const io = new Server(server, {
   cors: {
-    origin: ["http://localhost:5173", "http://localhost:5174"],
+    origin: ["http://localhost:5173", "http://localhost:5174", "http://127.0.0.1:5173", "http://127.0.0.1:5174"],
     credentials: true,
   },
 });
@@ -49,14 +50,35 @@ io.on("connection", (socket) => {
   });
 
   /* SEND MESSAGE */
-  socket.on("sendMessage", async ({ conversationId, text }) => {
+  socket.on("sendMessage", async ({ conversationId, text, image, tempId }) => {
     try {
-      if (!text?.trim()) return;
+      if ((!text?.trim() && !image) || !conversationId) {
+        console.error("❌ SOCKET: Missing text/image or conversationId");
+        return;
+      }
+
+      if (!socket.userId) {
+        console.error("❌ SOCKET: Missing socket.userId (Not authenticated)");
+        return;
+      }
+
+      let imageUrl = null;
+      if (image) {
+        try {
+          const uploadRes = await cloudinary.uploader.upload(image, {
+            folder: "chat_messages",
+          });
+          imageUrl = uploadRes.secure_url;
+        } catch (uploadErr) {
+          console.error("❌ CLOUDINARY CHAT UPLOAD ERROR:", uploadErr);
+        }
+      }
 
       const message = await Message.create({
         conversation: conversationId,
         sender: socket.userId,
-        text,
+        text: text || "",
+        image: imageUrl,
       });
 
       const convo = await Conversation.findByIdAndUpdate(
@@ -65,12 +87,16 @@ io.on("connection", (socket) => {
         { new: true }
       );
 
-      if (!convo) return;
+      if (!convo) {
+        console.error("❌ SOCKET: Conversation not found", conversationId);
+        return;
+      }
 
-      // chat UI (both users)
-      io.to(conversationId).emit("newMessage", message);
+      const messageData = message.toObject();
+      if (tempId) messageData.tempId = tempId;
 
-      // notify ONLY receiver
+      io.to(conversationId.toString()).emit("newMessage", messageData);
+
       const receiverId = convo.participants.find(
         (id) => id.toString() !== socket.userId.toString()
       );
@@ -79,15 +105,20 @@ io.on("connection", (socket) => {
         const receiverSocket = onlineUsers.get(receiverId.toString());
         if (receiverSocket) {
           io.to(receiverSocket).emit("newMessageNotification", {
-            conversationId,
-            message,
+            conversationId: conversationId.toString(),
+            message: messageData,
             sender: socket.userId
           });
         }
       }
     } catch (err) {
-      console.error("❌ SOCKET SEND_MESSAGE ERROR:", err);
+      console.error("❌ SOCKET SEND_MESSAGE ERROR:", err.message);
     }
+  });
+
+  /* DELETE MESSAGE */
+  socket.on("deleteMessage", ({ conversationId, messageId }) => {
+    io.to(conversationId.toString()).emit("messageDeleted", { messageId });
   });
 
   socket.on("disconnect", () => {

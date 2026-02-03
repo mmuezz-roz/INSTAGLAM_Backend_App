@@ -31,10 +31,7 @@ export const getOrCreateConversation = async (req, res) => {
 
     // Find existing conversation
     let convo = await Conversation.findOne({
-      $and: [
-        { participants: myId },
-        { participants: userId }
-      ]
+      participants: { $all: [myId, userId] }
     }).populate("participants", "username profilePic");
 
     if (convo) {
@@ -62,41 +59,62 @@ export const getOrCreateConversation = async (req, res) => {
 
 
 export const getMyConversations = async (req, res) => {
-  const convos = await Conversation.find({
-    participants: req.user._id,
-  })
-    .populate("participants", "username profilePic followers following")
-    .populate("lastMessage")
-    .sort({ updatedAt: -1 });
+  try {
+    const convos = await Conversation.find({
+      participants: req.user._id,
+    })
+      .populate("participants", "username profilePic followers following")
+      .populate("lastMessage")
+      .sort({ updatedAt: -1 });
 
-  res.json(convos);
+    res.json(convos);
+  } catch (err) {
+    console.error("❌ GET_CONVERSATIONS ERROR:", err);
+    res.status(500).json({ message: "Failed to load conversations" });
+  }
 };
 
 export const getMessages = async (req, res) => {
-  const messages = await Message.find({
-    conversation: req.params.conversationId,
-  }).sort({ createdAt: 1 });
+  try {
+    const { conversationId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(conversationId)) {
+      return res.status(400).json({ message: "Invalid conversation ID" });
+    }
 
-  res.json(messages);
+    const messages = await Message.find({
+      conversation: conversationId,
+    }).sort({ createdAt: 1 });
+
+    console.log(`📡 Found ${messages.length} messages for convo ${conversationId}`);
+    res.json(messages);
+  } catch (err) {
+    console.error("❌ GET_MESSAGES ERROR:", err);
+    res.status(500).json({ message: "Failed to load messages" });
+  }
 };
 
 export const getUnreadCounts = async (req, res) => {
-  const counts = await Message.aggregate([
-    {
-      $match: {
-        isRead: false,
-        sender: { $ne: req.user._id },
+  try {
+    const counts = await Message.aggregate([
+      {
+        $match: {
+          isRead: false,
+          sender: { $ne: req.user._id },
+        },
       },
-    },
-    {
-      $group: {
-        _id: "$conversation",
-        count: { $sum: 1 },
+      {
+        $group: {
+          _id: "$conversation",
+          count: { $sum: 1 },
+        },
       },
-    },
-  ]);
+    ]);
 
-  res.json(counts);
+    res.json(counts);
+  } catch (err) {
+    console.error("❌ GET_UNREAD_COUNTS ERROR:", err);
+    res.json([]);
+  }
 };
 
 export const searchAUsers = async (req, res) => {
@@ -144,5 +162,35 @@ export const markAllRead = async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ message: "Failed to mark all as read" });
+  }
+};
+
+export const deleteMessage = async (req, res) => {
+  try {
+    const { messageId } = req.params;
+    const message = await Message.findById(messageId);
+
+    if (!message) {
+      return res.status(404).json({ message: "Message not found" });
+    }
+
+    if (message.sender.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: "Unauthorized to delete this message" });
+    }
+
+    const conversationId = message.conversation;
+    await Message.findByIdAndDelete(messageId);
+
+    // If it was the last message, update the conversation
+    const lastMsg = await Message.findOne({ conversation: conversationId }).sort({ createdAt: -1 });
+    await Conversation.findByIdAndUpdate(conversationId, {
+      lastMessage: lastMsg ? lastMsg._id : null,
+      updatedAt: Date.now()
+    });
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("❌ DELETE_MESSAGE ERROR:", err);
+    res.status(500).json({ message: "Failed to delete message" });
   }
 };

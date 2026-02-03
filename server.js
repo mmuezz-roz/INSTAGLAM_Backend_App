@@ -1,4 +1,5 @@
-// InstaGlam Backend Server
+
+// Backend/server.js
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -14,7 +15,7 @@ connectDb();
 
 /* ---------------- MIDDLEWARE ---------------- */
 app.use(cors({
-  origin: ["http://localhost:5173", "http://localhost:5174"],
+  origin: ["http://localhost:5173", "http://localhost:5174", "http://127.0.0.1:5173", "http://127.0.0.1:5174"],
   credentials: true,
 }));
 app.use(express.json({ limit: "10mb" }));
@@ -32,7 +33,7 @@ app.use("/chat", ChatRoute);
 const PORT = process.env.PORT || 5000;
 
 server.listen(PORT, () => {
-  console.log(`🚀 InstaGlam Server running at http://localhost:${PORT}`);
+  console.log(`🚀 Sway Server running at http://localhost:${PORT}`);
 });
 
 // Graceful shutdown to prevent EADDRINUSE on nodemon restart
