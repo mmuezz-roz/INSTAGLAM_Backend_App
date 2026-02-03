@@ -3,16 +3,54 @@ import jwt from "jsonwebtoken";
 import { OAuth2Client } from "google-auth-library";
 
 import UserModel from "../Models/User.js";
+import OtpModel from "../Models/Otp.js";
 import { NotificationModel } from "../Models/Notification.js";
+import { PostModel } from "../Models/Post.js";
 import { getSocketId, io } from "../socket.js";
+import { sendOtpEmail } from "../Utilis/mail.js";
+
+/* ================= SEND OTP ================= */
+export const sendOtp = async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ message: "Email is required" });
+
+    // Check if email already exists
+    const existing = await UserModel.findOne({ email });
+    if (existing) {
+      return res.status(409).json({ message: "Email already exists" });
+    }
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+    // Store OTP
+    await OtpModel.findOneAndUpdate(
+      { email },
+      { otp, createdAt: new Date() },
+      { upsert: true, new: true }
+    );
+
+    await sendOtpEmail(email, otp);
+    res.json({ message: "OTP sent to your email" });
+  } catch (err) {
+    console.error("OTP Error:", err);
+    res.status(500).json({ message: "Failed to send OTP" });
+  }
+};
 
 /* ================= REGISTER ================= */
 export const registerUser = async (req, res) => {
   try {
-    const { username, email, password } = req.body;
+    const { username, email, password, otp } = req.body;
 
-    if (!username || !email || !password) {
-      return res.status(400).json({ message: "All fields are required" });
+    if (!username || !email || !password || !otp) {
+      return res.status(400).json({ message: "All fields including OTP are required" });
+    }
+
+    // Verify OTP
+    const otpRecord = await OtpModel.findOne({ email, otp });
+    if (!otpRecord) {
+      return res.status(400).json({ message: "Invalid or expired OTP" });
     }
 
     const existing = await UserModel.findOne({ email });
@@ -28,28 +66,27 @@ export const registerUser = async (req, res) => {
       password: hashed,
     });
 
+    // Delete OTP after successful registration
+    await OtpModel.deleteOne({ _id: otpRecord._id });
+
     const token = jwt.sign(
       { id: newUser._id },
       process.env.JWT_SECRET,
       { expiresIn: "1d" }
     );
 
-    // res.status(201).json({
-    //   token,
-    //   user: newUser,
-    // });
     res.status(201).json({
-  message: "Registration successful",
-  token,
-  user: {
-    _id: newUser._id,
-    username: newUser.username,
-    email: newUser.email,
-    profilePic: newUser.profilePic,
-    bio: newUser.bio,
-    isPrivate: newUser.isPrivate,
-  },
-});
+      message: "Registration successful",
+      token,
+      user: {
+        _id: newUser._id,
+        username: newUser.username,
+        email: newUser.email,
+        profilePic: newUser.profilePic,
+        bio: newUser.bio,
+        isPrivate: newUser.isPrivate,
+      },
+    });
 
   } catch (err) {
     res.status(500).json({ message: "Registration failed" });
@@ -139,11 +176,13 @@ export const getMyProfile = async (req, res) => {
     const user = await UserModel.findById(req.user._id).select("-password");
     if (!user) return res.status(404).json({ message: "User not found" });
 
+    const postCount = await PostModel.countDocuments({ user: req.user._id });
+
     res.json({
       user,
       followersCount: user.followers?.length || 0,
       followingCount: user.following?.length || 0,
-      postCount: 0,
+      postCount,
     });
   } catch (err) {
     res.status(500).json({ message: "Server error" });
@@ -160,7 +199,10 @@ export const getUserProfile = async (req, res) => {
     const isFollowing = user.followers.some(id => id.toString() === req.user._id.toString());
     const requestSent = user.followRequests.some(id => id.toString() === req.user._id.toString());
 
-    res.json({ user, isFollowing, requestSent });
+    // Get Post Count
+    const postCount = await PostModel.countDocuments({ user: req.params.id });
+
+    res.json({ user, isFollowing, requestSent, postCount, followersCount: user.followers.length, followingCount: user.following.length });
   } catch (err) {
     if (err.name === "CastError") {
       return res.status(404).json({ message: "User not found" });

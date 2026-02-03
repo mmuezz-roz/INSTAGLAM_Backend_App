@@ -95,11 +95,17 @@ export const getMessages = async (req, res) => {
 
 export const getUnreadCounts = async (req, res) => {
   try {
+    // 1. Find all conversations I'm part of
+    const myConvos = await Conversation.find({ participants: req.user._id }).select("_id");
+    const myConvoIds = myConvos.map(c => c._id);
+
+    // 2. Aggregate unread messages only within those conversations
     const counts = await Message.aggregate([
       {
         $match: {
+          conversation: { $in: myConvoIds },
           isRead: false,
-          sender: { $ne: req.user._id },
+          sender: { $ne: new mongoose.Types.ObjectId(req.user._id) },
         },
       },
       {

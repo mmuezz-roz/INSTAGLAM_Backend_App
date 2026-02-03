@@ -43,6 +43,7 @@ io.on("connection", (socket) => {
   console.log("🟢 Connected:", socket.userId);
 
   onlineUsers.set(socket.userId.toString(), socket.id);
+  socket.join(socket.userId.toString());
 
   /* JOIN CHAT ROOM */
   socket.on("joinConversation", (conversationId) => {
@@ -102,14 +103,11 @@ io.on("connection", (socket) => {
       );
 
       if (receiverId) {
-        const receiverSocket = onlineUsers.get(receiverId.toString());
-        if (receiverSocket) {
-          io.to(receiverSocket).emit("newMessageNotification", {
-            conversationId: conversationId.toString(),
-            message: messageData,
-            sender: socket.userId
-          });
-        }
+        io.to(receiverId.toString()).emit("newMessageNotification", {
+          conversationId: conversationId.toString(),
+          message: messageData,
+          sender: socket.userId
+        });
       }
     } catch (err) {
       console.error("❌ SOCKET SEND_MESSAGE ERROR:", err.message);

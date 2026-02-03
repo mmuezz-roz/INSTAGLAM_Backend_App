@@ -1,5 +1,5 @@
 import express from 'express'
-import { acceptFollowRequest, followUnfollowUser, getFollowRequests, getMyProfile, getUserProfile, googleAuth, registerUser, rejectFollowRequest, searchUsers, userLogin, getFollowers, getFollowing } from '../Controller/userController.js';
+import { acceptFollowRequest, followUnfollowUser, getFollowRequests, getMyProfile, getUserProfile, googleAuth, registerUser, rejectFollowRequest, searchUsers, userLogin, getFollowers, getFollowing, sendOtp } from '../Controller/userController.js';
 import Verifytoken from '../Middleware/Verifytoken.js';
 import { editProfile } from '../Controller/EditProfileController.js';
 import upload from '../Middleware/multer.js';
@@ -7,6 +7,7 @@ import { getNotifications, getUnreadCount, markNotificationsRead } from '../Cont
 
 const UserRoute = express.Router()
 
+UserRoute.post("/send-otp", sendOtp)
 UserRoute.post("/register", registerUser)
 UserRoute.post("/login", userLogin)
 UserRoute.post("/googlelog", googleAuth)
