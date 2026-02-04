@@ -38,9 +38,11 @@ app.use("/chat", ChatRoute);
 
 const PORT = process.env.PORT || 5000;
 
-server.listen(PORT, () => {
-  console.log(`🚀 Sway Server running at http://localhost:${PORT}`);
-});
+if (process.env.VERCEL !== '1') {
+  server.listen(PORT, () => {
+    console.log(`🚀 Sway Server running at http://localhost:${PORT}`);
+  });
+}
 
 // Graceful shutdown to prevent EADDRINUSE on nodemon restart
 process.on('SIGTERM', () => {
