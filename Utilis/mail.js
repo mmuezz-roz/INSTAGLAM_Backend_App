@@ -1,39 +1,56 @@
 import nodemailer from "nodemailer";
 
 export const sendOtpEmail = async (email, otp) => {
-  // Function-level cleaning to handle potential ESM hoisting issues 
-  // and stripping quotes/spaces from env variables (common on Render/Vercel)
-  const clean = (val) => val ? val.replace(/[\s"']/g, "") : "";
+  // ESM Hoisting fix: variables must be read inside the function
+  const clean = (val) => val ? val.trim().replace(/["']/g, "") : "";
 
   const user = clean(process.env.EMAIL_USER);
   const pass = clean(process.env.EMAIL_PASS);
 
+  console.log("Attempting to send email to:", email);
+  console.log("Using EMAIL_USER:", user ? "Defined (Masked)" : "UNDEFINED");
+  console.log("Using EMAIL_PASS:", pass ? "Defined (Masked)" : "UNDEFINED");
+
   if (!user || !pass) {
-    throw new Error("Missing EMAIL_USER or EMAIL_PASS environment variables");
+    throw new Error("SERVER ERROR: EMAIL_USER or EMAIL_PASS environment variables are missing on Render dashboard.");
   }
 
+  // More robust Gmail configuration for cloud environments
   const transporter = nodemailer.createTransport({
     service: "gmail",
-    auth: { user, pass },
+    auth: {
+      user: user,
+      pass: pass,
+    },
+    tls: {
+      rejectUnauthorized: false
+    }
   });
 
   const mailOptions = {
-    from: `"Sway" <${user}>`,
+    from: `"Sway Support" <${user}>`,
     to: email,
     subject: "SWAY Registration OTP",
     html: `
-      <div style="font-family: 'Fredoka', sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
+      <div style="font-family: sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
         <h2 style="color: #000; text-align: center;">Welcome to Sway</h2>
-        <p>Thank you for signing up! Please use the following One-Time Password (OTP) to verify your account:</p>
-        <div style="background: #f4f4f4; padding: 15px; text-align: center; font-size: 24px; font-weight: bold; letter-spacing: 5px; border-radius: 5px; margin: 20px 0;">
+        <p>Your One-Time Password (OTP) for registration is:</p>
+        <div style="background: #f4f4f4; padding: 15px; text-align: center; font-size: 32px; font-weight: bold; letter-spacing: 10px; border-radius: 5px; margin: 20px 0;">
           ${otp}
         </div>
-        <p>This OTP is valid for 10 minutes. If you did not request this, please ignore this email.</p>
+        <p>This code expires in 10 minutes.</p>
         <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
-        <p style="font-size: 12px; color: #888; text-align: center;">© 2026 SWAY FROM META</p>
+        <p style="font-size: 12px; color: #888; text-align: center;">© 2026 SWAY</p>
       </div>
     `,
   };
 
-  return transporter.sendMail(mailOptions);
+  try {
+    const info = await transporter.sendMail(mailOptions);
+    console.log("Email sent successfully:", info.response);
+    return info;
+  } catch (error) {
+    console.error("Nodemailer Error:", error.message);
+    throw new Error(`Email Service Error: ${error.message}`);
+  }
 };
