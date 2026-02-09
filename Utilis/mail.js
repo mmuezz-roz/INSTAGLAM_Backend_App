@@ -1,18 +1,24 @@
 import nodemailer from "nodemailer";
 
-const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
-  port: 465,
-  secure: true,
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS?.replace(/\s/g, ""),
-  },
-});
-
 export const sendOtpEmail = async (email, otp) => {
+  // Function-level cleaning to handle potential ESM hoisting issues 
+  // and stripping quotes/spaces from env variables (common on Render/Vercel)
+  const clean = (val) => val ? val.replace(/[\s"']/g, "") : "";
+
+  const user = clean(process.env.EMAIL_USER);
+  const pass = clean(process.env.EMAIL_PASS);
+
+  if (!user || !pass) {
+    throw new Error("Missing EMAIL_USER or EMAIL_PASS environment variables");
+  }
+
+  const transporter = nodemailer.createTransport({
+    service: "gmail",
+    auth: { user, pass },
+  });
+
   const mailOptions = {
-    from: process.env.EMAIL_USER,
+    from: `"Sway" <${user}>`,
     to: email,
     subject: "SWAY Registration OTP",
     html: `
